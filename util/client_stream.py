@@ -27,15 +27,17 @@ def record_callback(indata: np.ndarray,
 
 
 def stream_close(signum, frame):
-    Cosmic.stream.close()
+    if Cosmic.stream is not None:
+        Cosmic.stream.close()
 
 def stream_reopen():
     if not threading.main_thread().is_alive():
         return
     print('重启音频流')
 
-    # 关闭旧流
-    Cosmic.stream.close()
+    # 关闭旧流（如果存在）
+    if Cosmic.stream is not None:
+        Cosmic.stream.close()
 
     # 重载 PortAudio，更新设备列表
     sd._terminate()
@@ -58,18 +60,26 @@ def stream_open():
     except UnicodeDecodeError:
         console.print("由于编码问题，暂时无法获得麦克风设备名字", end='\n\n', style='bright_red')
     except sd.PortAudioError:
-        console.print("没有找到麦克风设备", end='\n\n', style='bright_red')
-        input('按回车键退出'); sys.exit()
+        console.print("没有找到麦克风设备，将等待设备可用", end='\n\n', style='bright_yellow')
+        # 不退出程序，而是返回None，并安排定时重试
+        threading.Timer(5.0, stream_reopen).start()
+        return None
 
-    stream = sd.InputStream(
-        samplerate=48000,
-        blocksize=int(0.05 * 48000),  # 0.05 seconds
-        device=None,
-        dtype="float32",
-        channels=channels,
-        callback=record_callback,
-        finished_callback=stream_reopen,
-    ); stream.start()
-
-    return stream
+    try:
+        stream = sd.InputStream(
+            samplerate=48000,
+            blocksize=int(0.05 * 48000),  # 0.05 seconds
+            device=None,
+            dtype="float32",
+            channels=channels,
+            callback=record_callback,
+            finished_callback=stream_reopen,
+        )
+        stream.start()
+        return stream
+    except sd.PortAudioError:
+        console.print("无法启动音频流，将等待设备可用", end='\n\n', style='bright_yellow')
+        # 如果无法创建流，也安排重试
+        threading.Timer(5.0, stream_reopen).start()
+        return None
 
